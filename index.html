@@ -1,0 +1,1616 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>VR Полигон — Counter-UAS (Meta Quest 3)</title>
+<style>
+  :root { --accent: #00ff9c; --warn: #ff3b3b; --amber: #ffb000; }
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070a;
+    font-family: 'Consolas', 'Courier New', monospace; color: #d6f5e6; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ===== Стартовый экран (до входа в VR / desktop) ===== */
+  #overlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: radial-gradient(ellipse at center, #0c1622 0%, #05070a 70%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; gap: 18px;
+  }
+  #overlay h1 { font-size: clamp(22px, 4vw, 38px); letter-spacing: 2px; color: var(--accent);
+    text-shadow: 0 0 18px rgba(0,255,156,.5); }
+  #overlay .sub { font-size: 14px; opacity: .8; max-width: 640px; line-height: 1.5; }
+  #overlay .warn { font-size: 12px; color: var(--amber); max-width: 580px; line-height: 1.5;
+    border: 1px solid rgba(255,176,0,.3); padding: 10px 14px; border-radius: 6px; background: rgba(255,176,0,.05); }
+  .btn-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .btn {
+    background: transparent; color: var(--accent); border: 1.5px solid var(--accent);
+    padding: 14px 26px; font: inherit; font-size: 16px; letter-spacing: 1px; cursor: pointer;
+    border-radius: 4px; transition: all .15s; text-transform: uppercase;
+  }
+  .btn:hover { background: var(--accent); color: #05070a; box-shadow: 0 0 24px rgba(0,255,156,.6); }
+  .btn.secondary { color: #8fd9ff; border-color: #8fd9ff; }
+  .btn.secondary:hover { background: #8fd9ff; color: #05070a; }
+  .controls-help { font-size: 12px; opacity: .6; margin-top: 10px; line-height: 1.7; }
+  .controls-help b { color: var(--accent); opacity: 1; }
+  #status { font-size: 12px; color: var(--amber); min-height: 16px; }
+
+  /* ===== Desktop HUD ===== */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; display: none; }
+  #hud .corner { position: absolute; font-size: 13px; line-height: 1.6; padding: 10px 14px;
+    background: rgba(5,10,15,.55); border: 1px solid rgba(0,255,156,.25); border-radius: 4px; backdrop-filter: blur(4px); }
+  #hudTL { top: 14px; left: 14px; } #hudTR { top: 14px; right: 14px; }
+  #hudBL { bottom: 14px; left: 14px; } #hudBR { bottom: 14px; right: 14px; }
+  .label { color: #6e8c7e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .val { color: var(--accent); font-size: 18px; font-weight: bold; }
+  .val.warn { color: var(--warn); } .val.amber { color: var(--amber); }
+  #weaponList { display: flex; flex-direction: column; gap: 4px; }
+  .wrow { display: flex; gap: 8px; align-items: baseline; opacity: .55; }
+  .wrow.active { opacity: 1; color: var(--accent); }
+  .wrow .k { color: var(--amber); font-weight: bold; }
+
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; width: 28px; height: 28px;
+    transform: translate(-50%, -50%); pointer-events: none; z-index: 21; display: none;
+  }
+  /* Эти прицелы подгоняются скриптом под режим */
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- Стартовый экран -->
+<div id="overlay">
+  <h1>VR ПОЛИГОН · COUNTER-UAS</h1>
+  <div class="sub">
+    Учебный тренажёр противовоздушной обороны против дронов-камикадзе (Shahed-класс) и боевых БПЛА.
+    Для <b>Meta Quest 3</b> через браузер (Meta Quest Browser). Без установки — открывается по ссылке.
+  </div>
+  <div class="warn">
+    ⚠ Тренажёр учебный (оборонительный counter-UAS / ПВО). Все модели и звуки синтезированы программно,
+    без реальных ТТХ. Назначение — тренировка навыков обнаружения, захвата и поражения воздушных целей.
+  </div>
+  <div class="btn-row">
+    <button class="btn" id="btnVR">ВОЙТИ В VR</button>
+    <button class="btn secondary" id="btnDesktop">РЕЖИМ ПК (предпросмотр)</button>
+  </div>
+  <div id="status"></div>
+  <div class="controls-help">
+    <b>Quest 3:</b> правый триггер — огонь · правый grip — захват цели (ПЗРК/РЭБ) ·
+    левый thumbstick Y — меню оружия · кнопки X/Y — смена оружия · B — пауза<br>
+    <b>ПК:</b> ЛКМ — огонь · ПКМ (удерж.) — захват · 1–4 — оружие · WASD — движение · мышь — обзор · R — пауза
+  </div>
+</div>
+
+<!-- Desktop HUD -->
+<div id="hud">
+  <div class="corner" id="hudTL">
+    <div class="label">СБИТО / ОПАСНОСТЬ</div>
+    <div><span class="val" id="hudKills">0</span> <span class="label">целей</span></div>
+    <div><span class="label">прорыв:</span> <span class="val warn" id="hudLeaks">0</span></div>
+    <div><span class="label">волна:</span> <span class="val amber" id="hudWave">1</span></div>
+  </div>
+  <div class="corner" id="hudTR">
+    <div class="label">ОРУЖИЕ</div>
+    <div id="weaponList"></div>
+  </div>
+  <div class="corner" id="hudBL">
+    <div class="label">БОЕЗАПАС</div>
+    <div><span class="val" id="hudAmmo">—</span></div>
+    <div class="label" id="hudState"></div>
+  </div>
+  <div class="corner" id="hudBR">
+    <div class="label">СТАТУС ЗАХВАТА</div>
+    <div><span class="val" id="hudLock">НЕТ</span></div>
+  </div>
+</div>
+
+<svg id="crosshair" viewBox="0 0 28 28">
+  <circle cx="14" cy="14" r="10" fill="none" stroke="#00ff9c" stroke-width="1" opacity=".5"/>
+  <line x1="14" y1="2" x2="14" y2="8" stroke="#00ff9c" stroke-width="1.5"/>
+  <line x1="14" y1="20" x2="14" y2="26" stroke="#00ff9c" stroke-width="1.5"/>
+  <line x1="2" y1="14" x2="8" y2="14" stroke="#00ff9c" stroke-width="1.5"/>
+  <line x1="20" y1="14" x2="26" y2="14" stroke="#00ff9c" stroke-width="1.5"/>
+  <circle id="lockDot" cx="14" cy="14" r="2" fill="#ffb000" style="display:none"/>
+</svg>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ============================================================================
+//  VR ПОЛИГОН · COUNTER-UAS  —  весь игровой код
+//  Учебный тренажёр ПВО. Синтез звука и моделей — программный, без ассетов.
+// ============================================================================
+
+// ---------- Глобальные параметры ----------
+const CFG = {
+  worldSize: 1000,            // размер полигона
+  playerHeight: 1.7,          // высота глаз оператора
+  droneSpawnDist: 600,        // дальность спавна целей
+  protectedZoneR: 80,         // радиус защищаемой зоны (прорыв = цель долетела)
+  maxLiveDrones: 12,
+};
+
+// Состояние игры
+const State = {
+  mode: null,                 // 'vr' | 'desktop'
+  running: false,
+  paused: false,
+  kills: 0,
+  leaks: 0,
+  wave: 1,
+  currentWeaponIdx: 0,
+  startTime: 0,
+};
+
+// ---------- Утилиты ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// возвращает угол между двумя векторами в радианах (0 = сонаправлены)
+function angleBetween(a, b) {
+  const d = a.dot(b);
+  return Math.acos(clamp(d / (a.length() * b.length() || 1), -1, 1));
+}
+
+// ============================================================================
+//  АУДИО — всё синтезируется через Web Audio API
+// ============================================================================
+class AudioSys {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.enabled = false;
+    this.engineNodes = new Map(); // drone.id -> {osc, gain}
+  }
+  init() {
+    if (this.ctx) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.7;
+      this.master.connect(this.ctx.destination);
+      this.enabled = true;
+    } catch (e) { console.warn('Audio init failed', e); }
+  }
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+
+  // Выстрел автопушки/карабина — короткий шумовой импульс + низкий "бум"
+  shot(kind = 'auto') {
+    if (!this.enabled) return;
+    const t = this.ctx.currentTime;
+    const dur = kind === 'rifle' ? 0.08 : 0.14;
+    // шумовая часть
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
+    }
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = kind === 'rifle' ? 2200 : 1200;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(kind === 'rifle' ? 0.35 : 0.55, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(filt); filt.connect(g); g.connect(this.master);
+    src.start(t); src.stop(t + dur);
+    // низкий бум
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(120, t);
+    osc.frequency.exponentialRampToValueAtTime(45, t + dur);
+    const og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.4, t); og.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(og); og.connect(this.master);
+    osc.start(t); osc.stop(t + dur);
+  }
+
+  // Запуск ракеты ПЗРК — свистящий уходит вверх тон
+  missileLaunch() {
+    if (!this.enabled) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(900, t + 1.5);
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 800; filt.Q.value = 2;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.3, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+    osc.connect(filt); filt.connect(g); g.connect(this.master);
+    osc.start(t); osc.stop(t + 1.7);
+  }
+
+  // Тон захвата цели ПЗРК — прерывистый писк, учащается при захвате
+  lockTone(phase) { // phase: 'search' | 'acquire' | 'locked'
+    if (!this.enabled) return;
+    const t = this.ctx.currentTime;
+    const interval = phase === 'locked' ? 0.12 : phase === 'acquire' ? 0.25 : 0.5;
+    const freq = phase === 'locked' ? 1800 : 1100;
+    for (let i = 0; i < (phase === 'search' ? 2 : 4); i++) {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'square'; osc.frequency.value = freq;
+      const g = this.ctx.createGain();
+      const st = t + i * interval;
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(0.15, st + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.06);
+      osc.connect(g); g.connect(this.master);
+      osc.start(st); osc.stop(st + 0.07);
+    }
+  }
+
+  // РЭБ-глушилка — непрерывный шумовой "затыкатель"
+  jamBurst() {
+    if (!this.enabled) return;
+    const t = this.ctx.currentTime;
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.4, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'highpass'; filt.frequency.value = 1500;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.2, t + 0.05);
+    g.gain.linearRampToValueAtTime(0.0001, t + 0.4);
+    src.connect(filt); filt.connect(g); g.connect(this.master);
+    src.start(t); src.stop(t + 0.45);
+  }
+
+  // Взрыв — низкочастотный "бум" + шум
+  explosion() {
+    if (!this.enabled) return;
+    const t = this.ctx.currentTime;
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.6, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 1.5);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'lowpass'; filt.frequency.value = 400;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.8, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    src.connect(filt); filt.connect(g); g.connect(this.master);
+    src.start(t); src.stop(t + 0.65);
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(80, t);
+    osc.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+    const og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.7, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    osc.connect(og); og.connect(this.master);
+    osc.start(t); osc.stop(t + 0.6);
+  }
+
+  // Цикличный звук двигателя дрона (высокий жужжащий тон)
+  startEngine(droneId) {
+    if (!this.enabled) return;
+    if (this.engineNodes.has(droneId)) return;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = rand(140, 200);
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 350; filt.Q.value = 4;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.0;
+    osc.connect(filt); filt.connect(g); g.connect(this.master);
+    osc.start();
+    this.engineNodes.set(droneId, { osc, filt, g });
+  }
+  setEngineParams(droneId, distance, isQuad) {
+    const n = this.engineNodes.get(droneId);
+    if (!n) return;
+    // громкость убывает с расстоянием
+    const vol = clamp(1 - distance / 400, 0, 1) * 0.12;
+    n.g.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.1);
+    n.filt.frequency.setTargetAtTime(isQuad ? 900 : 350, this.ctx.currentTime, 0.1);
+    n.osc.frequency.setTargetAtTime(isQuad ? 240 : 170, this.ctx.currentTime, 0.1);
+  }
+  stopEngine(droneId) {
+    const n = this.engineNodes.get(droneId);
+    if (!n) return;
+    try {
+      n.g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      n.osc.stop(this.ctx.currentTime + 0.2);
+    } catch (e) {}
+    this.engineNodes.delete(droneId);
+  }
+}
+const Audio = new AudioSys();
+
+// ============================================================================
+//  ТЕКСТУРЫ — PBR-текстуры для детализации графики
+// ============================================================================
+const Textures = {};
+const _texLoader = new THREE.TextureLoader();
+function _initTex(path, repeat) {
+  const tex = _texLoader.load(path);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  if (repeat) tex.repeat.set(repeat, repeat);
+  return tex;
+}
+Textures.ground     = _initTex('textures/ground.png', 50);
+Textures.building   = _initTex('textures/building.png', 1);
+Textures.shahed     = _initTex('textures/shahed.png', 1);
+Textures.quadcopter = _initTex('textures/quadcopter.png', 1);
+Textures.gunmetal   = _initTex('textures/gunmetal.png', 1);
+Textures.polymer    = _initTex('textures/polymer.png', 1);
+Textures.hud        = _initTex('textures/hud.png', 1);
+
+// ============================================================================
+//  МОДЕЛИ — строим из примитивов Three.js
+// ============================================================================
+
+// Shahed-стиль: дельта-крыло, удлинённый фюзеляж, двигатель сзади
+function buildShahedMesh() {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ map: Textures.shahed, color: 0x4a4f55, roughness: 0.7, metalness: 0.2 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.8 });
+
+  // фюзеляж — конус вперёд
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.08, 2.4, 8), bodyMat);
+  fus.rotation.z = Math.PI / 2; fus.rotation.x = Math.PI / 2;
+  fus.position.z = 0.2; g.add(fus);
+
+  // носовой конус
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.6, 8), bodyMat);
+  nose.rotation.x = -Math.PI / 2; nose.position.z = 1.7; g.add(nose);
+
+  // дельта-крылья (треугольники)
+  const wingShape = new THREE.Shape();
+  wingShape.moveTo(0, 0); wingShape.lineTo(-1.6, -0.9); wingShape.lineTo(-1.6, 0.1); wingShape.lineTo(0, 0);
+  const wingGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.05, bevelEnabled: false });
+  const wingL = new THREE.Mesh(wingGeo, bodyMat);
+  wingL.rotation.y = Math.PI / 2; wingL.position.set(0.7, 0, -0.4);
+  const wingR = wingL.clone(); wingR.scale.x = -1; wingR.position.x = -0.75;
+  g.add(wingL, wingR);
+
+  // хвостовое оперение (вертикальный стабилизатор)
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.4, 0.5), darkMat);
+  tail.position.set(0, 0.18, -1.0); g.add(tail);
+
+  // "двигатель" сзади (труба) + тлеющее сопло
+  const eng = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.4, 8), darkMat);
+  eng.rotation.x = Math.PI / 2; eng.position.z = -1.3; g.add(eng);
+  const nozzle = new THREE.Mesh(new THREE.CircleGeometry(0.1, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff7a1a }));
+  nozzle.position.z = -1.5; nozzle.rotation.y = Math.PI; g.add(nozzle);
+
+  g.userData.nozzle = nozzle;
+  return g;
+}
+
+// Квадрокоптер (малый разведчик/ударный) — рама + 4 пропеллера
+function buildQuadMesh() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ map: Textures.quadcopter, color: 0x1f2226, roughness: 0.6, metalness: 0.3 });
+  const arm = new THREE.MeshStandardMaterial({ color: 0x33373c, roughness: 0.7 });
+
+  // центральное тело
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.15, 0.45), mat);
+  g.add(body);
+  // носовая камера
+  const cam = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6),
+    new THREE.MeshStandardMaterial({ color: 0x111, roughness: 0.2 }));
+  cam.position.set(0, -0.05, 0.25); g.add(cam);
+
+  // 4 луча + пропеллера
+  const propellers = [];
+  const armLen = 0.7;
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const x = Math.cos(ang) * armLen, z = Math.sin(ang) * armLen;
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, armLen * 2, 6), arm);
+    beam.rotation.z = Math.PI / 2; beam.rotation.y = ang;
+    beam.position.set(x / 2, 0, z / 2); g.add(beam);
+    // мотор
+    const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.08, 8), arm);
+    motor.position.set(x, 0.05, z); g.add(motor);
+    // пропеллер (2 лопасти)
+    const prop = new THREE.Group();
+    const bladeGeo = new THREE.BoxGeometry(0.5, 0.01, 0.05);
+    const b1 = new THREE.Mesh(bladeGeo, new THREE.MeshStandardMaterial({ color: 0x111, transparent: true, opacity: 0.7 }));
+    const b2 = b1.clone(); b2.rotation.y = Math.PI / 2;
+    prop.add(b1, b2); prop.position.set(x, 0.1, z); g.add(prop);
+    propellers.push(prop);
+  }
+  g.userData.propellers = propellers;
+  return g;
+}
+
+// Земля + окружение полигона
+function buildEnvironment(scene) {
+  // небо (градиент через фоновый шейдерный купол)
+  const skyGeo = new THREE.SphereGeometry(CFG.worldSize * 0.9, 32, 16);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { top: { value: new THREE.Color(0x2a5a8c) }, bottom: { value: new THREE.Color(0xc8b890) } },
+    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 bottom;
+      void main(){ float h = normalize(vP).y*0.5+0.5; gl_FragColor = vec4(mix(bottom, top, smoothstep(0.4,0.9,h)),1.0); }`,
+  });
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+  // земля с текстурой
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(CFG.worldSize, 64),
+    new THREE.MeshStandardMaterial({ map: Textures.ground, color: 0x5a5040, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2; ground.position.y = 0; scene.add(ground);
+
+  // сетка-ориентир (как на полигоне)
+  const grid = new THREE.GridHelper(CFG.worldSize * 1.4, 70, 0x3a4a3a, 0x2a3a2a);
+  grid.position.y = 0.05; scene.add(grid);
+
+  // защищаемый объект — несколько строений в центре
+  const buildMat = new THREE.MeshStandardMaterial({ map: Textures.building, color: 0x6a6258, roughness: 0.9 });
+  const buildingPositions = [
+    [0, 0, 0, 8, 6, 8], [14, 0, -8, 6, 4, 10], [-12, 0, 10, 10, 5, 6],
+    [6, 0, 18, 5, 7, 5], [-18, 0, -6, 7, 3, 7],
+  ];
+  for (const [x, y, z, w, h, d] of buildingPositions) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buildMat);
+    b.position.set(x, h / 2, z); scene.add(b);
+    // крыша чуть темнее
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.3, d + 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x3a3530 }));
+    roof.position.set(x, h + 0.15, z); scene.add(roof);
+  }
+
+  // кольцо защищаемой зоны (визуально)
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(CFG.protectedZoneR - 0.5, CFG.protectedZoneR + 0.5, 64),
+    new THREE.MeshBasicMaterial({ color: 0x00ff9c, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1;
+  ring.userData.isZoneRing = true; scene.add(ring);
+
+  // дальние холмы (низкополигональные) для ориентира
+  const hillMat = new THREE.MeshStandardMaterial({ color: 0x3d4a3a, roughness: 1, flatShading: true });
+  for (let i = 0; i < 24; i++) {
+    const ang = (i / 24) * Math.PI * 2;
+    const r = CFG.worldSize * 0.7;
+    const hill = new THREE.Mesh(new THREE.ConeGeometry(rand(40, 80), rand(30, 70), 6), hillMat);
+    hill.position.set(Math.cos(ang) * r, rand(15, 35), Math.sin(ang) * r);
+    hill.rotation.y = rand(0, 6); scene.add(hill);
+  }
+
+  // освещение
+  const sun = new THREE.DirectionalLight(0xfff0d0, 1.2);
+  sun.position.set(100, 200, 80); scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x6a5a40, 0.6));
+  scene.add(new THREE.AmbientLight(0x404050, 0.4));
+
+  // туман — скрывает спавн на дистанции, но не слишком плотный
+  scene.fog = new THREE.Fog(0xc8b890, 250, CFG.worldSize * 0.7);
+}
+
+// ============================================================================
+//  КЛАСС ДРОН
+// ============================================================================
+let _droneId = 0;
+
+// Радиальная "вспышка" для маркера дрона (canvas-текстура)
+const _glowCache = new Map();
+function makeGlowTexture(colorHex) {
+  if (_glowCache.has(colorHex)) return _glowCache.get(colorHex);
+  const size = 128;
+  const cvs = document.createElement('canvas');
+  cvs.width = cvs.height = size;
+  const ctx = cvs.getContext('2d');
+  const c = new THREE.Color(colorHex);
+  const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, `rgba(255,255,255,1)`);
+  grad.addColorStop(0.25, `rgba(${r},${g},${b},0.9)`);
+  grad.addColorStop(0.6, `rgba(${r},${g},${b},0.35)`);
+  grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(cvs);
+  _glowCache.set(colorHex, tex);
+  return tex;
+}
+
+class Drone {
+  constructor(scene, type = 'shahed') {
+    this.id = ++_droneId;
+    this.type = type;          // 'shahed' | 'quad'
+    this.scene = scene;
+    this.alive = true;
+    this.jammed = false;       // заглушен РЭБ
+    this.health = type === 'shahed' ? 100 : 50;
+
+    // модель
+    this.mesh = type === 'shahed' ? buildShahedMesh() : buildQuadMesh();
+    this.mesh.userData.drone = this;
+
+    // спавн по дуге на дистанции
+    const ang = rand(0, Math.PI * 2);
+    const dist = CFG.droneSpawnDist + rand(-50, 80);
+    const alt = type === 'shahed' ? rand(60, 140) : rand(15, 60);
+    this.pos = new THREE.Vector3(Math.cos(ang) * dist, alt, Math.sin(ang) * dist);
+    this.mesh.position.copy(this.pos);
+
+    // курс — на защищаемую зону (центр + случайный офсет)
+    const target = new THREE.Vector3(rand(-30, 30), rand(8, 25), rand(-30, 30));
+    this.velocity = target.clone().sub(this.pos).normalize();
+    this.speed = type === 'shahed' ? rand(45, 65) : rand(20, 35); // м/с (условные)
+    // начальная ориентация модели
+    this.mesh.lookAt(target);
+
+    // параметры движения (легкое рысканье для сложности)
+    this.bobPhase = rand(0, 6.28);
+    this.weaveAmp = rand(3, 9);
+    this.weaveFreq = rand(0.2, 0.6);
+
+    // увеличенный масштаб — заметнее с дистанции
+    this.mesh.scale.setScalar(type === 'shahed' ? 2.2 : 1.6);
+
+    scene.add(this.mesh);
+
+    // светящийся маркер-биллборд: всегда повёрнут к игроку, виден издалека
+    const markerColor = type === 'shahed' ? 0xff3b3b : 0xffb000;
+    const markerTex = makeGlowTexture(markerColor);
+    const markerMat = new THREE.SpriteMaterial({
+      map: markerTex, color: 0xffffff, transparent: true, depthTest: false, depthWrite: false,
+      blending: THREE.AdditiveBlending, opacity: 0.9,
+    });
+    this.marker = new THREE.Sprite(markerMat);
+    this.marker.scale.setScalar(type === 'shahed' ? 14 : 10);
+    this.marker.renderOrder = 997;
+    scene.add(this.marker);
+
+    Audio.startEngine(this.id);
+    this._engineQuad = type === 'quad';
+  }
+
+  update(dt, now) {
+    if (!this.alive) return;
+    if (this.jammed) {
+      // заглушен: теряет управление, дрейфует вниз с раскачкой
+      this.pos.y -= 12 * dt;
+      this.pos.x += Math.sin(now * 3) * 8 * dt;
+      this.pos.z += Math.cos(now * 2.5) * 8 * dt;
+      this.mesh.rotation.x += dt * 1.5;
+      this.mesh.rotation.z += dt * 0.8;
+      if (this.pos.y < -2) { this.destroy('crash'); }
+      this.mesh.position.copy(this.pos);
+      if (this.marker) { this.marker.position.copy(this.pos); this.marker.material.opacity = 0.4; }
+      return;
+    }
+    // нормальный полёт: движение к цели + лёгкое плетение
+    const toCenter = new THREE.Vector3().subVectors(new THREE.Vector3(0, this.pos.y, 0), this.pos);
+    const distXZ = Math.hypot(this.pos.x, this.pos.z);
+    // слегка корректируем курс к центру
+    const desired = new THREE.Vector3(-this.pos.x, 0, -this.pos.z).normalize();
+    this.velocity.lerp(desired, dt * 0.4).normalize();
+    // боковое плетение
+    const weave = Math.sin(now * this.weaveFreq + this.bobPhase) * this.weaveAmp;
+    const right = new THREE.Vector3(-this.velocity.z, 0, this.velocity.x).normalize();
+    this.pos.addScaledVector(this.velocity, this.speed * dt);
+    this.pos.addScaledVector(right, weave * dt);
+    this.pos.y += Math.sin(now * 1.5 + this.bobPhase) * 1.5 * dt; // лёгкая "качка" по высоте
+
+    this.mesh.position.copy(this.pos);
+    const lookAt = this.pos.clone().addScaledVector(this.velocity, 5);
+    this.mesh.lookAt(lookAt);
+
+    // анимация пропеллеров для квадрокоптера
+    if (this.type === 'quad') {
+      for (const p of this.mesh.userData.propellers) p.rotation.y += dt * 60;
+    } else {
+      // мерцание сопла
+      const nz = this.mesh.userData.nozzle;
+      if (nz) nz.material.color.setHSL(0.06, 1, 0.45 + Math.sin(now * 30) * 0.1);
+    }
+
+    // звук двигателя по расстоянию до оператора
+    const dToPlayer = this.pos.distanceTo(Player.position);
+    Audio.setEngineParams(this.id, dToPlayer, this._engineQuad);
+
+    // маркер следует за дроном; мигает при близкой угрозе, размер зависит от дальности
+    if (this.marker) {
+      this.marker.position.copy(this.pos);
+      const pulse = 0.7 + Math.sin(now * 4 + this.bobPhase) * 0.3;
+      // дальний дрон — крупнее/ярче маркер, чтобы было видно
+      const sizeBase = this.type === 'shahed' ? 14 : 10;
+      this.marker.scale.setScalar(sizeBase * pulse * (dToPlayer > 250 ? 1.6 : 1.0));
+      this.marker.material.opacity = clamp(1 - dToPlayer / 900, 0.2, 0.95);
+    }
+
+    // прорыв? достиг защищаемой зоны
+    if (distXZ < CFG.protectedZoneR) {
+      this.destroy('leak');
+      Game.onLeak();
+    }
+  }
+
+  damage(amount) {
+    this.health -= amount;
+    if (this.health <= 0) this.destroy('kill');
+  }
+
+  jam() {
+    if (this.jammed || !this.alive) return;
+    this.jammed = true;
+    Audio.jamBurst();
+  }
+
+  destroy(reason) {
+    if (!this.alive) return;
+    this.alive = false;
+    Audio.stopEngine(this.id);
+    if (reason === 'kill' || reason === 'crash') {
+      Audio.explosion();
+      spawnExplosion(this.scene, this.pos.clone());
+    }
+    // маркер гаснем сразу
+    if (this.marker) {
+      this.marker.visible = false;
+      this.scene.remove(this.marker);
+    }
+    // убрать модель через короткую задержку (взрыв ещё длится)
+    setTimeout(() => {
+      this.scene.remove(this.mesh);
+      this.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }, 100);
+  }
+}
+
+// Эффект взрыва — разлёт частиц + вспышка
+const explosions = [];
+function spawnExplosion(scene, pos) {
+  const group = new THREE.Group();
+  group.position.copy(pos);
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(2, 12, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 1 }));
+  group.add(flash);
+  const parts = [];
+  const partMat = new THREE.MeshBasicMaterial({ color: 0xff7030, transparent: true });
+  for (let i = 0; i < 14; i++) {
+    const p = new THREE.Mesh(new THREE.SphereGeometry(rand(0.2, 0.5), 6, 4), partMat);
+    p.position.copy(pos);
+    const dir = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
+    p.userData.vel = dir.multiplyScalar(rand(8, 22));
+    p.userData.life = rand(0.5, 1.0);
+    group.add(p); parts.push(p);
+  }
+  scene.add(group);
+  explosions.push({ group, flash, parts, age: 0, ttl: 1.2 });
+}
+function updateExplosions(dt) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const e = explosions[i];
+    e.age += dt;
+    const k = e.age / e.ttl;
+    e.flash.material.opacity = clamp(1 - k * 2, 0, 1);
+    e.flash.scale.setScalar(1 + k * 2);
+    for (const p of e.parts) {
+      p.position.addScaledVector(p.userData.vel, dt);
+      p.userData.vel.y -= 15 * dt; // гравитация
+      p.userData.vel.multiplyScalar(0.96);
+      p.material.opacity = clamp(1 - k, 0, 1);
+      p.scale.setScalar(clamp(1 - k, 0.1, 1));
+    }
+    if (e.age >= e.ttl) {
+      Game.scene.remove(e.group);
+      e.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+      explosions.splice(i, 1);
+    }
+  }
+}
+
+// ============================================================================
+//  СНАРЯДЫ (пули автопушки и ракеты ПЗРК)
+// ============================================================================
+const projectiles = [];
+
+// Расстояние от точки P до отрезка AB. Возвращает квадрат расстояния и точку на отрезке.
+const _AB = new THREE.Vector3(), _AP = new THREE.Vector3(), _BP = new THREE.Vector3();
+function distPointToSegment(p, a, b) {
+  _AB.subVectors(b, a); _AP.subVectors(p, a);
+  const abLen2 = _AB.lengthSq();
+  let t = abLen2 > 1e-8 ? _AP.dot(_AB) / abLen2 : 0;
+  t = clamp(t, 0, 1);
+  _BP.copy(a).addScaledVector(_AB, t);
+  return _BP.distanceTo(p);
+}
+
+class Bullet {
+  // трассер со swept-collision: проверяем пересечение отрезка траектории со сферой дрона,
+  // чтобы быстрые пули не "перепрыгивали" цель между кадрами (tunneling).
+  constructor(scene, from, dir, speed, damage, range) {
+    this.scene = scene; this.damage = damage; this.range = range; this.traveled = 0;
+    this.vel = dir.clone().normalize().multiplyScalar(speed);
+    this.alive = true;
+    // удлинённый трассер — заметнее в небе
+    const geo = new THREE.CylinderGeometry(0.08, 0.02, 3.0, 6);
+    geo.translate(0, -1.5, 0); // "хвост" тянется назад от носа
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffd070, transparent: true, opacity: 0.9 });
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh.position.copy(from);
+    this.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    scene.add(this.mesh);
+    this.prev = from.clone();
+    this.from = from.clone();
+  }
+  update(dt, drones) {
+    if (!this.alive) return;
+    this.prev.copy(this.mesh.position);
+    const step = this.vel.clone().multiplyScalar(dt);
+    this.mesh.position.add(step);
+    this.traveled += step.length();
+    // проверка столкновений: отрезок prev→cur vs сфера дрона (увеличенные радиусы)
+    for (const d of drones) {
+      if (!d.alive) continue;
+      const r = d.type === 'shahed' ? 4.0 : 2.6;
+      const dist = distPointToSegment(d.pos, this.prev, this.mesh.position);
+      if (dist < r) {
+        d.damage(this.damage);
+        this.alive = false; break;
+      }
+    }
+    if (this.traveled > this.range) this.alive = false;
+    if (!this.alive) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+    }
+  }
+}
+
+class Missile {
+  // ракета ПЗРК с самонаведением на захваченную цель.
+  // Скорости в условных м/с: быстрый старт, мощное ускорение, высокий потолок.
+  constructor(scene, from, target) {
+    this.scene = scene; this.target = target; this.alive = true; this.age = 0; this.ttl = 6;
+    // корпус ракеты
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 8),
+      new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.4 }));
+    body.rotation.x = Math.PI / 2; g.add(body);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x990000 }));
+    head.rotation.x = -Math.PI / 2; head.position.z = 0.8; g.add(head);
+    this.trail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 1.5, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.8 }));
+    this.trail.position.z = -1.0; this.trail.rotation.x = Math.PI / 2; g.add(this.trail);
+    g.position.copy(from);
+    this.mesh = g; scene.add(this.mesh);
+    // старт: 220 м/с, направление "вперёд-вверх"
+    this.vel = new THREE.Vector3(0, 0.3, 1).normalize().multiplyScalar(220);
+    this.mesh.lookAt(g.position.clone().add(this.vel));
+  }
+  update(dt, drones) {
+    if (!this.alive) return;
+    this.age += dt;
+    // самонаведение
+    if (this.target && this.target.alive) {
+      const desired = this.target.pos.clone().sub(this.mesh.position).normalize();
+      // ракета быстро доворачивает на цель (agile), ускорение 480 м/с², потолок 560 м/с
+      this.vel.lerp(desired.multiplyScalar(this.vel.length()), dt * 4.5).normalize()
+        .multiplyScalar(Math.min(this.vel.length() + 480 * dt, 560));
+    } else {
+      this.target = null;
+    }
+    this.mesh.position.addScaledVector(this.vel, dt);
+    this.mesh.lookAt(this.mesh.position.clone().add(this.vel));
+    // попадание?
+    if (this.target && this.target.alive) {
+      if (this.mesh.position.distanceTo(this.target.pos) < 4.0) {
+        this.target.damage(500); // ракета убивает наверняка
+        this.alive = false;
+      }
+    } else {
+      // цель потеряна — летим по инерции, через время самоуничтожаемся
+      for (const d of drones) {
+        if (d.alive && this.mesh.position.distanceTo(d.pos) < 3.5) {
+          d.damage(500); this.alive = false; break;
+        }
+      }
+    }
+    if (this.age > this.ttl || this.mesh.position.y < 0) this.alive = false;
+    if (!this.alive) {
+      this.scene.remove(this.mesh);
+      this.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+  }
+}
+
+// ============================================================================
+//  ОРУЖИЕ
+// ============================================================================
+const WEAPONS = [
+  { id: 'zu23',   name: 'ЗУ-23 (автопушка)', ammo: Infinity, key: '1' },
+  { id: 'manpads',name: 'ПЗРК (Игла/Стингер)', ammo: 4, key: '2' },
+  { id: 'rifle',  name: 'Карабин', ammo: Infinity, key: '3', overheat: true },
+  { id: 'jammer', name: 'РЭБ-глушилка', ammo: Infinity, key: '4' },
+];
+
+class Weapon {
+  constructor(type) {
+    this.type = type;
+    this.lockedTarget = null;     // для ПЗРК/РЭБ
+    this.lockProgress = 0;        // 0..1 прогресс захвата
+    this.state = 'idle';          // 'idle' | 'search' | 'acquire' | 'locked'
+    this.cooldown = 0;
+    this.heat = 0;                // перегрев для карабина
+    this.ammoLeft = this.def().ammo;
+    this.triggerDown = false;
+    this.lockDown = false;
+  }
+  def() { return WEAPONS.find(w => w.id === this.type); }
+
+  // направление прицеливания из контроллера/мыши
+  update(dt, aimOrigin, aimDir, drones) {
+    if (this.cooldown > 0) this.cooldown -= dt;
+    if (this.heat > 0) this.heat = Math.max(0, this.heat - dt * 0.4);
+
+    if (this.type === 'manpads' || this.type === 'jammer') {
+      this.updateLock(dt, aimOrigin, aimDir, drones);
+    } else {
+      this.lockedTarget = null; this.state = 'idle'; this.lockProgress = 0;
+    }
+
+    if (this.type === 'jammer' && this.lockDown && this.lockedTarget) {
+      // РЭБ глушит захваченную цель постоянно
+      this.lockedTarget.jam();
+    }
+  }
+
+  updateLock(dt, origin, dir, drones) {
+    const aimDirN = dir.clone().normalize();
+    if (!this.lockDown) {
+      // режим поиска: ищем цель в конусе прицеливания
+      let best = null, bestAng = Math.PI / 8; // ~22° конус
+      for (const d of drones) {
+        if (!d.alive) continue;
+        const to = d.pos.clone().sub(origin);
+        const dist = to.length(); to.normalize();
+        const a = angleBetween(to, aimDirN);
+        if (a < bestAng && dist < 500) { bestAng = a; best = d; }
+      }
+      if (best) { this.state = 'acquire'; this._candidate = best; this.lockProgress += dt / 1.4; }
+      else { this.state = 'search'; this.lockProgress = Math.max(0, this.lockProgress - dt); this._candidate = null; }
+
+      if (this.lockProgress >= 1 && this._candidate) {
+        this.lockedTarget = this._candidate;
+        this.state = 'locked';
+        if (this.type === 'manpads') Audio.lockTone('locked');
+      } else if (this._candidate && this.type === 'manpads' && Math.random() < dt * 3) {
+        Audio.lockTone('acquire');
+      }
+    } else {
+      // удержание на цели — поддерживаем захват, если цель ушла из конуса — теряем
+      if (this.lockedTarget && this.lockedTarget.alive) {
+        const to = this.lockedTarget.pos.clone().sub(origin).normalize();
+        if (angleBetween(to, aimDirN) > Math.PI / 5) {
+          this.lockedTarget = null; this.state = 'search'; this.lockProgress = 0;
+        }
+      }
+    }
+  }
+
+  fire(origin, dir) {
+    if (this.cooldown > 0) return false;
+    if (this.type === 'rifle' && this.heat >= 1) return false;
+
+    if (this.type === 'zu23') {
+      Audio.shot('auto');
+      projectiles.push(new Bullet(Game.scene, origin, dir, 400, 35, 600));
+      this.cooldown = 0.09; // ~650 выстр/мин
+      return true;
+    }
+    if (this.type === 'rifle') {
+      Audio.shot('rifle');
+      projectiles.push(new Bullet(Game.scene, origin, dir, 500, 25, 400));
+      this.cooldown = 0.13;
+      this.heat = Math.min(1, this.heat + 0.06);
+      return true;
+    }
+    if (this.type === 'manpads') {
+      if (this.ammoLeft <= 0) return false;
+      if (!this.lockedTarget || !this.lockedTarget.alive) {
+        // нельзя стрелять без захвата
+        return false;
+      }
+      Audio.missileLaunch();
+      projectiles.push(new Missile(Game.scene, origin.clone(), this.lockedTarget));
+      this.ammoLeft--;
+      this.cooldown = 0.6;
+      this.lockedTarget = null; this.state = 'search'; this.lockProgress = 0;
+      return true;
+    }
+    // jammer не "стреляет", работает через updateLock + jam()
+    return false;
+  }
+}
+
+// ============================================================================
+//  ИГРОК + ВИЗУАЛИЗАЦИЯ ОРУЖИЯ
+// ============================================================================
+const Player = {
+  position: new THREE.Vector3(0, CFG.playerHeight, 40), // оператор стоит чуть позади зоны
+  rig: null,                  // группа, в которой "стоит" игрок (для VR dolly)
+  camera: null,
+  controllers: { left: null, right: null },
+  // визуальные модели оружия на правом контроллере / курсоре
+  weaponMesh: null,
+};
+
+// Простая модель зенитки/винтовки на правом контроллере
+function buildWeaponVisual(type) {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ map: Textures.gunmetal, color: 0x2a2a2e, roughness: 0.5, metalness: 0.7 });
+  const polymer = new THREE.MeshStandardMaterial({ map: Textures.polymer, color: 0x2a3a2a, roughness: 0.6, metalness: 0.3 });
+  if (type === 'zu23') {
+    // сдвоенный ствол
+    const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 1.0, 8), metal);
+    b1.rotation.x = Math.PI / 2; b1.position.set(0.05, 0, -0.5); g.add(b1);
+    const b2 = b1.clone(); b2.position.x = -0.05; g.add(b2);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.15, 0.3), metal);
+    body.position.z = 0.1; g.add(body);
+  } else if (type === 'manpads') {
+    // труба ПЗРК
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.2, 12), metal);
+    tube.rotation.x = Math.PI / 2; tube.position.z = -0.4; g.add(tube);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), polymer);
+    grip.position.set(0, -0.12, 0.1); g.add(grip);
+    // ИК-головка спереди
+    const seeker = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8),
+      new THREE.MeshStandardMaterial({ map: Textures.polymer, color: 0x111111, emissive: 0x220000 }));
+    seeker.position.z = -1.0; g.add(seeker);
+    g.userData.seeker = seeker;
+  } else if (type === 'rifle') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.7), metal);
+    body.position.z = -0.2; g.add(body);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 8), metal);
+    barrel.rotation.x = Math.PI / 2; barrel.position.z = -0.6; g.add(barrel);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.25), metal);
+    stock.position.set(0, -0.02, 0.18); g.add(stock);
+  } else if (type === 'jammer') {
+    // направленная антенна-рупор
+    const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.18, 0.4, 12),
+      new THREE.MeshStandardMaterial({ map: Textures.polymer, color: 0x3a3a40, metalness: 0.6, roughness: 0.4 }));
+    cone.rotation.x = -Math.PI / 2; cone.position.z = -0.3; g.add(cone);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.18, 0.1), polymer);
+    grip.position.set(0, -0.12, 0.1); g.add(grip);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0x00ff9c }));
+    led.position.set(0, 0.02, 0.18); g.add(led);
+    g.userData.led = led;
+  }
+  return g;
+}
+
+// ============================================================================
+//  HUD (3D, крепится к камере) + индикатор прицеливания/захвата
+// ============================================================================
+function buildHUD() {
+  // Canvas-текстура для HUD
+  const cvs = document.createElement('canvas');
+  cvs.width = 512; cvs.height = 256;
+  const tex = new THREE.CanvasTexture(cvs);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.5), mat);
+  mesh.renderOrder = 999;
+  mesh.userData.tex = tex; mesh.userData.cvs = cvs; mesh.userData.ctx = cvs.getContext('2d');
+  return mesh;
+}
+
+// Радар: круглая top-down мини-карта — отдельная canvas-текстура
+const RADAR = {
+  range: 700,                 // радиус обзора радара (метры)
+  mesh: null, ctx: null, tex: null, sweep: 0,
+};
+function buildRadar() {
+  const size = 320;
+  const cvs = document.createElement('canvas');
+  cvs.width = size; cvs.height = size;
+  const tex = new THREE.CanvasTexture(cvs);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55), mat);
+  mesh.renderOrder = 998;
+  mesh.userData.tex = tex; mesh.userData.cvs = cvs;
+  RADAR.mesh = mesh; RADAR.tex = tex; RADAR.ctx = cvs.getContext('2d');
+  return mesh;
+}
+// Рисует один кадр радара: игрок в центре, дроны — точками, зона — кольцом
+function drawRadar(drones, now) {
+  const ctx = RADAR.ctx, S = 320, cx = S / 2, cy = S / 2, R = S / 2 - 6;
+  ctx.clearRect(0, 0, S, S);
+  // фон с лёгкой текстурой HUD
+  ctx.fillStyle = 'rgba(0,15,10,0.82)';
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+  // кольца дальности
+  ctx.strokeStyle = 'rgba(0,255,156,0.25)'; ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) {
+    ctx.beginPath(); ctx.arc(cx, cy, R * i / 3, 0, Math.PI * 2); ctx.stroke();
+  }
+  // крестовина
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+  ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
+  // сектор развертки (вращающаяся линия)
+  RADAR.sweep = (RADAR.sweep + 0.03) % (Math.PI * 2);
+  const grad = ctx.createConicGradient ? null : null;
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(RADAR.sweep);
+  const g = ctx.createLinearGradient(0, 0, R, 0);
+  g.addColorStop(0, 'rgba(0,255,156,0.5)'); g.addColorStop(1, 'rgba(0,255,156,0)');
+  ctx.strokeStyle = g; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(R, 0); ctx.stroke();
+  ctx.restore();
+
+  // защищаемая зона (центр карты) — кольцо
+  const zoneR = (CFG.protectedZoneR / RADAR.range) * R;
+  ctx.strokeStyle = 'rgba(0,255,156,0.8)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, zoneR), 0, Math.PI * 2); ctx.stroke();
+
+  // ориентация: North = вверх. Игрок смотрит туда, куда направлен yaw/направление взгляда.
+  // Player._radarForward — угол взгляда игрока в мире (рад, 0 = -Z/север), обновляется в animate.
+  const fwd = (Player._radarForward || 0);
+
+  // дроны
+  for (const d of drones) {
+    if (!d.alive) continue;
+    const dx = d.pos.x - Player.position.x;
+    const dz = d.pos.z - Player.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > RADAR.range) continue;
+    // угол дрона в мире (0 = север/-Z), по часовой
+    const worldAng = Math.atan2(dx, -dz);
+    // поворачиваем так, чтобы направление взгляда игрока было вверх радара
+    const rel = worldAng - fwd;
+    const rr = (dist / RADAR.range) * R;
+    const px = cx + Math.sin(rel) * rr;
+    const py = cy - Math.cos(rel) * rr;
+    // цвет по типу/состоянию
+    let col = d.type === 'shahed' ? '#ff3b3b' : '#ffb000';
+    if (d.jammed) col = '#8fd9ff';
+    ctx.fillStyle = col;
+    const sz = d.type === 'shahed' ? 5 : 3.5;
+    ctx.beginPath(); ctx.arc(px, py, sz, 0, Math.PI * 2); ctx.fill();
+    // ореол
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath(); ctx.arc(px, py, sz + 4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // игрок в центре (треугольник "куда смотрит")
+  ctx.fillStyle = '#00ff9c';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 7); ctx.lineTo(cx - 5, cy + 5); ctx.lineTo(cx + 5, cy + 5); ctx.closePath();
+  ctx.fill();
+
+  // подпись
+  ctx.fillStyle = '#6e8c7e'; ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
+  ctx.fillText('РАДАР ' + Math.round(RADAR.range) + 'м', cx, S - 4);
+  ctx.textAlign = 'left';
+
+  RADAR.tex.needsUpdate = true;
+}
+
+// ============================================================================
+//  ИГРА
+// ============================================================================
+const Game = {
+  scene: null,
+  renderer: null,
+  clock: null,
+  drones: [],
+  weapon: null,           // активный Weapon
+  hudMesh: null,
+  ringPulse: 0,
+  spawnTimer: 0,
+  spawnInterval: 4,
+  desktopInput: { yaw: 0, pitch: 0, keys: {} },
+
+  init() {
+    this.scene = new THREE.Scene();
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.xr.enabled = true;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById('app').appendChild(this.renderer.domElement);
+
+    Player.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, CFG.worldSize * 1.2);
+
+    // VR rig — в нём живёт игрок
+    Player.rig = new THREE.Group();
+    Player.rig.position.copy(Player.position);
+    this.scene.add(Player.rig);
+    Player.rig.add(Player.camera);
+
+    buildEnvironment(this.scene);
+
+    // оружие по умолчанию
+    this.weapon = new Weapon(WEAPONS[0].id);
+
+    // HUD
+    this.hudMesh = buildHUD();
+    Player.camera.add(this.hudMesh);
+    this.hudMesh.position.set(0, -0.35, -1.0);
+
+    // Радар — в левом верхнем углу обзора
+    const radarMesh = buildRadar();
+    Player.camera.add(radarMesh);
+    radarMesh.position.set(-0.42, 0.32, -1.0);
+
+    this.clock = new THREE.Clock();
+
+    window.addEventListener('resize', () => {
+      Player.camera.aspect = window.innerWidth / window.innerHeight;
+      Player.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  },
+
+  onLeak() {
+    State.leaks++;
+    flashRing(0xff3b3b);
+  },
+
+  start(mode) {
+    State.mode = mode;
+    State.running = true;
+    State.kills = 0; State.leaks = 0; State.wave = 1;
+    State.startTime = performance.now();
+    this.spawnInterval = 4;
+    this.spawnTimer = 1;
+    Audio.init(); Audio.resume();
+    document.getElementById('overlay').style.display = 'none';
+    if (mode === 'desktop') {
+      document.getElementById('hud').style.display = 'block';
+      document.getElementById('crosshair').style.display = 'block';
+      this.setupDesktopControls();
+    } else {
+      this.setupVRControllers();
+    }
+    this.renderer.setAnimationLoop(this.animate.bind(this));
+  },
+
+  // ---------- Контроллеры VR ----------
+  setupVRControllers() {
+    const ctrlL = this.renderer.xr.getController(0);
+    const ctrlR = this.renderer.xr.getController(1);
+    Player.rig.add(ctrlL, ctrlR);
+    Player.controllers.left = ctrlL;
+    Player.controllers.right = ctrlR;
+
+    // визуальная модель оружия на правом
+    Player.weaponMesh = buildWeaponVisual(this.weapon.type);
+    ctrlR.add(Player.weaponMesh);
+
+    // луч-прицел из правого контроллера
+    const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -8)]);
+    const ray = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({ color: 0x00ff9c, transparent: true, opacity: 0.4 }));
+    ray.position.z = -0.2;
+    ctrlR.add(ray);
+    Player.aimRay = ray;
+
+    // правый триггер — огонь
+    ctrlR.addEventListener('selectstart', () => { this.weapon.triggerDown = true; this.tryFire(); });
+    ctrlR.addEventListener('selectend', () => { this.weapon.triggerDown = false; });
+    // правый grip — захват цели (ПЗРК/РЭБ)
+    ctrlR.addEventListener('squeezestart', () => { this.weapon.lockDown = true; if (this.weapon.type === 'manpads') Audio.lockTone('search'); });
+    ctrlR.addEventListener('squeezeend', () => { this.weapon.lockDown = false; });
+
+    // левый контроллер:
+    //  - триггер (select) — следующее оружие
+    //  - grip (squeeze) — предыдущее оружие
+    //  - thumbstick вверх/вниз — тоже смена оружия
+    ctrlL.addEventListener('selectstart', () => this.cycleWeapon(1));
+    ctrlL.addEventListener('squeezestart', () => this.cycleWeapon(-1));
+    ctrlL.addEventListener('axeschanged', (e) => {
+      const ay = e.gamepad && e.gamepad.axes ? e.gamepad.axes[3] : undefined;
+      if (ay !== undefined && Math.abs(ay) > 0.7) {
+        if (!this._thumbArmed) { this.cycleWeapon(ay > 0 ? 1 : -1); this._thumbArmed = true; }
+      } else { this._thumbArmed = false; }
+    });
+  },
+
+  // ---------- Управление desktop ----------
+  setupDesktopControls() {
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener('click', () => canvas.requestPointerLock());
+    document.addEventListener('pointerlockchange', () => {
+      this._pointerLocked = (document.pointerLockElement === canvas);
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!this._pointerLocked) return;
+      this.desktopInput.yaw -= e.movementX * 0.0022;
+      this.desktopInput.pitch -= e.movementY * 0.0022;
+      this.desktopInput.pitch = clamp(this.desktopInput.pitch, -1.2, 1.2);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!this._pointerLocked) return;
+      if (e.button === 0) { this.weapon.triggerDown = true; this.tryFire(); }
+      if (e.button === 2) {
+        this.weapon.lockDown = true;
+        if (this.weapon.type === 'manpads') Audio.lockTone('search');
+      }
+    });
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.weapon.triggerDown = false;
+      if (e.button === 2) this.weapon.lockDown = false;
+    });
+    document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('keydown', (e) => {
+      this.desktopInput.keys[e.code] = true;
+      if (e.code === 'Digit1') this.selectWeapon(0);
+      if (e.code === 'Digit2') this.selectWeapon(1);
+      if (e.code === 'Digit3') this.selectWeapon(2);
+      if (e.code === 'Digit4') this.selectWeapon(3);
+      if (e.code === 'KeyR') State.paused = !State.paused;
+      if (e.code === 'KeyQ') this.cycleWeapon(-1);
+      if (e.code === 'KeyE') this.cycleWeapon(1);
+    });
+    document.addEventListener('keyup', (e) => { this.desktopInput.keys[e.code] = false; });
+
+    // авто-огонь для автопушки/карабина при зажатой ЛКМ
+    Player.weaponMesh = buildWeaponVisual(this.weapon.type);
+    // оружие "висит" внизу справа камеры
+    Player.weaponMesh.position.set(0.25, -0.25, -0.6);
+    Player.camera.add(Player.weaponMesh);
+  },
+
+  // ---------- Смена оружия ----------
+  selectWeapon(idx) {
+    State.currentWeaponIdx = ((idx % WEAPONS.length) + WEAPONS.length) % WEAPONS.length;
+    const def = WEAPONS[State.currentWeaponIdx];
+    this.weapon = new Weapon(def.id);
+    // обновить визуальную модель
+    if (Player.weaponMesh && Player.weaponMesh.parent) Player.weaponMesh.parent.remove(Player.weaponMesh);
+    Player.weaponMesh = buildWeaponVisual(def.id);
+    if (State.mode === 'vr' && Player.controllers.right) {
+      Player.controllers.right.add(Player.weaponMesh);
+    } else if (State.mode === 'desktop') {
+      Player.weaponMesh.position.set(0.25, -0.25, -0.6);
+      Player.camera.add(Player.weaponMesh);
+    }
+  },
+  cycleWeapon(dir) { this.selectWeapon(State.currentWeaponIdx + dir); },
+
+  tryFire() {
+    const aim = this.getAim();
+    const fired = this.weapon.fire(aim.origin, aim.dir);
+    // авто-огонь обрабатывается в animate через triggerDown
+    if (fired && this.weapon.type !== 'manpads') {} // звук уже внутри
+  },
+
+  // направление и точка прицеливания
+  getAim() {
+    if (State.mode === 'vr' && Player.controllers.right) {
+      const c = Player.controllers.right;
+      const origin = new THREE.Vector3();
+      const dir = new THREE.Vector3(0, 0, -1);
+      c.getWorldPosition(origin);
+      c.getWorldDirection(dir); dir.negate();
+      return { origin, dir };
+    } else {
+      // desktop — из камеры по её направлению
+      const origin = new THREE.Vector3();
+      Player.camera.getWorldPosition(origin);
+      const dir = new THREE.Vector3();
+      Player.camera.getWorldDirection(dir);
+      return { origin, dir };
+    }
+  },
+
+  // ---------- Спавнер волн ----------
+  spawnWave() {
+    if (this.drones.filter(d => d.alive).length >= CFG.maxLiveDrones) return;
+    // тип зависит от волны
+    const shahedChance = clamp(0.5 + State.wave * 0.05, 0.5, 0.85);
+    const type = Math.random() < shahedChance ? 'shahed' : 'quad';
+    const d = new Drone(this.scene, type);
+    this.drones.push(d);
+    // чистим убитых
+    this.drones = this.drones.filter(x => x.alive || x._kept);
+  },
+
+  // ---------- Игровой цикл ----------
+  animate() {
+    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const now = performance.now() / 1000;
+    if (State.paused) { this.renderer.render(this.scene, Player.camera); return; }
+
+    // движение в desktop
+    if (State.mode === 'desktop') this.updateDesktopMovement(dt);
+
+    // позиция игрока (для расчётов звука/спавна)
+    Player.rig.getWorldPosition(Player.position);
+
+    // спавнер
+    if (State.running) {
+      this.spawnTimer -= dt;
+      if (this.spawnTimer <= 0) {
+        this.spawnWave();
+        // волны учащаются
+        State.wave = 1 + Math.floor((performance.now() - State.startTime) / 30000);
+        this.spawnInterval = Math.max(1.2, 4 - State.wave * 0.25);
+        this.spawnTimer = this.spawnInterval * rand(0.7, 1.3);
+      }
+    }
+
+    // авто-огонь для автоматического оружия
+    if (this.weapon.triggerDown && (this.weapon.type === 'zu23' || this.weapon.type === 'rifle')) {
+      this.tryFire();
+    }
+
+    // обновление оружия (захват и т.д.)
+    const aim = this.getAim();
+    this.weapon.update(dt, aim.origin, aim.dir, this.drones);
+
+    // визуальная индикация захвата на ИК-головке ПЗРК / РЭБ
+    this.updateWeaponVisuals(now);
+
+    // дроны
+    for (const d of this.drones) d.update(dt, now);
+    // убираем уничтоженные дроны (взрыв-эффект уже отработал)
+    this.drones = this.drones.filter(d => !d._disposeReady);
+
+    // снаряды
+    for (const p of projectiles) p.update(dt, this.drones);
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      if (!projectiles[i].alive) projectiles.splice(i, 1);
+    }
+
+    // взрывы
+    updateExplosions(dt);
+
+    // кольцо зоны — пульсация при угрозе
+    this.ringPulse += dt;
+    const ringObj = this.scene.children.find(o => o.userData.isZoneRing);
+    if (ringObj) {
+      const threat = this.drones.filter(d => d.alive).length;
+      ringObj.material.opacity = 0.15 + Math.sin(this.ringPulse * (2 + threat * 0.3)) * 0.08 + threat * 0.01;
+    }
+
+    // угол взгляда игрока для радара (0 = -Z / север, по часовой)
+    {
+      const dir = new THREE.Vector3();
+      Player.camera.getWorldDirection(dir);
+      Player._radarForward = Math.atan2(dir.x, -dir.z);
+    }
+
+    // HUD + радар
+    this.updateHUD();
+    drawRadar(this.drones, now);
+
+    this.renderer.render(this.scene, Player.camera);
+  },
+
+  updateDesktopMovement(dt) {
+    const k = this.desktopInput.keys;
+    const speed = 25 * dt;
+    // ориентация камеры по yaw/pitch
+    Player.rig.rotation.y = this.desktopInput.yaw;
+    Player.camera.rotation.set(this.desktopInput.pitch, 0, 0);
+    const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, this.desktopInput.yaw, 0));
+    const right = new THREE.Vector3(1, 0, 0).applyEuler(new THREE.Euler(0, this.desktopInput.yaw, 0));
+    if (k['KeyW']) Player.rig.position.addScaledVector(fwd, speed);
+    if (k['KeyS']) Player.rig.position.addScaledVector(fwd, -speed);
+    if (k['KeyD']) Player.rig.position.addScaledVector(right, speed);
+    if (k['KeyA']) Player.rig.position.addScaledVector(right, -speed);
+    Player.rig.position.y = CFG.playerHeight;
+  },
+
+  updateWeaponVisuals(now) {
+    if (!Player.weaponMesh) return;
+    if (this.weapon.type === 'manpads' && Player.weaponMesh.userData.seeker) {
+      const s = Player.weaponMesh.userData.seeker;
+      const c = this.weapon.state === 'locked' ? 0xff0000 : this.weapon.state === 'acquire' ? 0xffaa00 : 0x440000;
+      s.material.emissive.setHex(c);
+      if (this.weapon.state === 'locked') s.scale.setScalar(1 + Math.sin(now * 12) * 0.2);
+      else s.scale.setScalar(1);
+    }
+    if (this.weapon.type === 'jammer' && Player.weaponMesh.userData.led) {
+      const l = Player.weaponMesh.userData.led;
+      l.material.color.setHex(this.weapon.lockedTarget ? 0xff3b3b : 0x00ff9c);
+    }
+    // луч прицеливания VR меняет цвет при захвате
+    if (State.mode === 'vr' && Player.aimRay) {
+      Player.aimRay.material.color.setHex(
+        this.weapon.state === 'locked' ? 0xff3b3b :
+        this.weapon.state === 'acquire' ? 0xffb000 : 0x00ff9c);
+    }
+    // дрон-цель — обводка
+    this.updateTargetMarker();
+  },
+
+  updateTargetMarker() {
+    if (!this._marker) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff3b3b, wireframe: true, transparent: true, opacity: 0.8 }));
+      this._marker = m; this.scene.add(m); m.visible = false;
+    }
+    const t = this.weapon.lockedTarget;
+    if (t && t.alive) {
+      this._marker.visible = true;
+      this._marker.position.copy(t.pos);
+      const r = t.type === 'shahed' ? 3.0 : 1.8;
+      this._marker.scale.setScalar(r);
+    } else {
+      this._marker.visible = false;
+    }
+  },
+
+  // ---------- Обновление HUD ----------
+  updateHUD() {
+    const def = this.weapon.def();
+    const alive = this.drones.filter(d => d.alive).length;
+    // Desktop DOM HUD
+    if (State.mode === 'desktop') {
+      document.getElementById('hudKills').textContent = State.kills;
+      document.getElementById('hudLeaks').textContent = State.leaks;
+      document.getElementById('hudWave').textContent = State.wave;
+      // список оружия
+      const wl = document.getElementById('weaponList');
+      wl.innerHTML = WEAPONS.map((w, i) =>
+        `<div class="wrow ${i === State.currentWeaponIdx ? 'active' : ''}"><span class="k">${w.key}</span> ${w.name}</div>`
+      ).join('');
+      // боезапас
+      let ammoTxt;
+      if (def.ammo === Infinity) {
+        ammoTxt = this.weapon.type === 'rifle' ? `ТЕПЛО ${Math.round((1 - this.weapon.heat) * 100)}%` : '∞';
+      } else {
+        ammoTxt = this.weapon.ammoLeft + ' / ' + def.ammo;
+      }
+      document.getElementById('hudAmmo').textContent = ammoTxt;
+      // статус захвата
+      const lockEl = document.getElementById('hudLock');
+      if (this.weapon.type === 'manpads') {
+        lockEl.textContent = this.weapon.state === 'locked' ? 'ЗАХВАТ' : this.weapon.state === 'acquire' ? 'ПОИСК...' : 'НЕТ';
+        lockEl.className = 'val ' + (this.weapon.state === 'locked' ? 'warn' : this.weapon.state === 'acquire' ? 'amber' : '');
+      } else if (this.weapon.type === 'jammer') {
+        lockEl.textContent = this.weapon.lockedTarget ? 'ПОДАВЛЕНИЕ' : 'НЕТ';
+        lockEl.className = 'val ' + (this.weapon.lockedTarget ? 'warn' : '');
+      } else {
+        lockEl.textContent = '—';
+        lockEl.className = 'val';
+      }
+      document.getElementById('hudState').textContent = State.paused ? '⏸ ПАУЗА' : '';
+      // цвет прицела под захват
+      const ch = document.getElementById('crosshair');
+      const lockDot = document.getElementById('lockDot');
+      if (this.weapon.state === 'locked' || this.weapon.lockedTarget) {
+        ch.style.filter = 'hue-rotate(-90deg) saturate(2)'; lockDot.style.display = 'block';
+      } else if (this.weapon.state === 'acquire') {
+        ch.style.filter = 'hue-rotate(-30deg)'; lockDot.style.display = 'none';
+      } else {
+        ch.style.filter = 'none'; lockDot.style.display = 'none';
+      }
+    }
+
+    // 3D HUD (текстура) — рисуем заново
+    const ctx = this.hudMesh.userData.ctx;
+    const tex = this.hudMesh.userData.tex;
+    ctx.clearRect(0, 0, 512, 256);
+    // фон: полупрозрачный с текстурой HUD
+    ctx.fillStyle = 'rgba(0,20,15,0.55)';
+    ctx.fillRect(0, 0, 512, 256);
+    try { ctx.drawImage(Textures.hud.image, 0, 0, 512, 256); } catch(e) {}
+    ctx.strokeStyle = 'rgba(0,255,156,0.5)'; ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, 508, 252);
+    ctx.fillStyle = '#00ff9c';
+    ctx.fillText(`СБИТО: ${State.kills}   ПРОРЫВ: ${State.leaks}`, 16, 38);
+    ctx.fillStyle = '#ffb000';
+    ctx.fillText(`ВОЛНА ${State.wave}   ЦЕЛЕЙ В ВОЗДУХЕ: ${alive}`, 16, 72);
+    ctx.fillStyle = '#d6f5e6';
+    ctx.fillText(`${def.name}`, 16, 110);
+    let stLine = '';
+    if (this.weapon.type === 'manpads') {
+      stLine = 'ЗАХВАТ: ' + (this.weapon.state === 'locked' ? '✓ ЦЕЛЬ' : this.weapon.state === 'acquire' ? '...' : 'НЕТ');
+    } else if (this.weapon.type === 'jammer') {
+      stLine = this.weapon.lockedTarget ? 'ПОДАВЛЕНИЕ КАНАЛА' : 'НЕТ ЗАХВАТА';
+    } else if (this.weapon.type === 'rifle') {
+      stLine = `ТЕПЛО: ${'█'.repeat(Math.round((1 - this.weapon.heat) * 10))}`;
+    } else {
+      stLine = 'АВТО';
+    }
+    ctx.fillStyle = this.weapon.state === 'locked' || this.weapon.lockedTarget ? '#ff3b3b' : '#d6f5e6';
+    ctx.fillText(stLine, 16, 142);
+    ctx.fillStyle = '#6e8c7e'; ctx.font = '14px Consolas, monospace';
+    ctx.fillText('1 ЗУ-23  2 ПЗРК  3 Карабин  4 РЭБ', 16, 178);
+    ctx.fillText('ПКМ — захват · R — пауза', 16, 202);
+    tex.needsUpdate = true;
+  },
+};
+
+// Вспышка кольца зоны при прорыве
+function flashRing(color) {
+  const ringObj = Game.scene.children.find(o => o.userData.isZoneRing);
+  if (ringObj) { ringObj.material.color.setHex(color); setTimeout(() => ringObj.material.color.setHex(0x00ff9c), 500); }
+}
+
+// Перехват события уничтожения для подсчёта килов — расширим Drone.destroy
+const _origDestroy = Drone.prototype.destroy;
+Drone.prototype.destroy = function (reason) {
+  if (!this.alive) return;
+  _origDestroy.call(this, reason);
+  if (reason === 'kill') {
+    State.kills++;
+    this._counted = true;
+  } else if (reason === 'leak') {
+    // уже учли в onLeak
+  }
+  this._disposeReady = true;
+};
+
+// ============================================================================
+//  ИНИЦИАЛИЗАЦИЯ + КНОПКИ
+// ============================================================================
+Game.init();
+
+// WebXR доступность
+const vrBtn = document.getElementById('btnVR');
+const statusEl = document.getElementById('status');
+
+async function checkVR() {
+  if (!('xr' in navigator)) { statusEl.textContent = 'WebXR не поддерживается этим браузером. На Quest 3 — используйте Meta Quest Browser.'; vrBtn.disabled = true; return; }
+  try {
+    const supported = await navigator.xr.isSessionSupported('immersive-vr');
+    if (!supported) {
+      statusEl.textContent = 'VR-сессия недоступна. На ПК — используйте режим предпросмотра. На Quest 3 откройте страницу в Meta Quest Browser по HTTPS.';
+      vrBtn.disabled = true;
+    } else {
+      statusEl.textContent = '✓ VR поддерживается. Нажмите «Войти в VR», наденьте шлем.';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Проверка VR не удалась: ' + e.message;
+  }
+}
+checkVR();
+
+async function enterVR() {
+  if (!('xr' in navigator)) { Game.start('desktop'); return; }
+  try {
+    // layers для passthrough ( Quest 3 ) — опционально, не падает если нет
+    let features = ['local-floor', 'bounded-floor'];
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: features });
+    Game.renderer.xr.setReferenceSpaceType('local-floor');
+    await Game.renderer.xr.setSession(session);
+    Game.start('vr');
+  } catch (e) {
+    statusEl.textContent = 'Не удалось войти в VR: ' + e.message + ' — открыта версия для ПК.';
+    Game.start('desktop');
+  }
+}
+
+vrBtn.addEventListener('click', enterVR);
+
+document.getElementById('btnDesktop').addEventListener('click', () => Game.start('desktop'));
+
+// Запуск анимации даже до старта игры (чтобы было окружение)
+Game.renderer.setAnimationLoop(() => {
+  if (!State.running) {
+    Game.renderer.render(Game.scene, Player.camera);
+  }
+});
+
+console.log('%cVR Полигон Counter-UAS загружен', 'color:#00ff9c;font-size:14px');
+</script>
+
+<script>
+// WindowResize заглушка — на случай, если отдельный файл недоступен
+window.WindowResize = window.WindowResize || function () {};
+</script>
+</body>
+</html>
